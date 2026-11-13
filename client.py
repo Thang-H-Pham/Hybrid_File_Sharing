@@ -5,12 +5,12 @@ import threading
 HOST = "100.105.143.67"
 PORT = 11226
 BUFFER_SIZE = 4096
-DOWNLOAD_DIR = "downloads"
 
+# Send data/msg
 def send_line(sock, line):
     sock.sendall((line + "\n").encode())
 
-
+# Retrieve data/msg
 def recv_line(sock):
     data = b""
     while True:
@@ -22,16 +22,34 @@ def recv_line(sock):
         data += byte
     return data.decode()
 
-
+# Send help to the client
 def print_help():
-    print("Commands:")
-    print("  msg <text>          send a message")
-    print("  upload <path>       upload a file")
-    print("  download <filename> download a file")
-    print("  list                list files on the server")
-    print("  quit                exit")
+     print("Commands: msg <text> | upload <path> | download <file> | list | help | quit")
 
 
+# Transfer file into the main/central server
+def transfer_file(sock, path):
+    if not os.path.isfile(path):
+        return "ERROR File not found: " + path
+
+    filename = os.path.basename(path)
+    if " " in filename:
+        return "ERROR Filenames with spaces are not supported"
+
+    size = os.path.getsize(path)
+
+    send_line(sock, "TRANSFER " + filename + ": " + str(size))
+
+    f = open(path, "rb")
+    chunk = f.read(BUFFER_SIZE)
+    while chunk:
+        sock.sendall(chunk)
+        chunk = f.read(BUFFER_SIZE)
+    f.close()
+
+    return recv_line(sock)
+
+# Main program
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(10)
@@ -73,6 +91,11 @@ def main():
                 send_line(sock, "QUIT")
                 print(recv_line(sock))
                 break
+            
+            # Transfer file into central server
+            # ----- transfer <path> -----
+            elif cmd == "transfer" and arg != "":
+                print(transfer_file(sock, arg))
 
             else:
                 print("Unknown command. Type 'help'.")
