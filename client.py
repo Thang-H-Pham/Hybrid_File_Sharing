@@ -1,6 +1,5 @@
 import os
 import socket
-import threading
 
 HOST = "100.105.143.67"
 PORT = 11226
@@ -24,11 +23,11 @@ def recv_line(sock):
 
 # Send help to the client
 def print_help():
-     print("Commands: msg <text> | upload <path> | download <file> | list | help | quit")
-
+    print('Commands: transfer "path" (upload a file) | list (show shared files) | help (show commands) | quit (disconnect)')
 
 # Transfer file into the main/central server
-def transfer_file(sock, path):
+def transfer_file_to_server(sock, path):
+    path = path.strip().strip('"').strip("'")
     if not os.path.isfile(path):
         return "ERROR File not found: " + path
 
@@ -40,12 +39,11 @@ def transfer_file(sock, path):
 
     send_line(sock, "TRANSFER " + filename + ": " + str(size))
 
-    f = open(path, "rb")
-    chunk = f.read(BUFFER_SIZE)
-    while chunk:
-        sock.sendall(chunk)
+    with open(path, "rb") as f:
         chunk = f.read(BUFFER_SIZE)
-    f.close()
+        while chunk:
+            sock.sendall(chunk)
+            chunk = f.read(BUFFER_SIZE)
 
     return recv_line(sock)
 
@@ -72,13 +70,8 @@ def main():
             cmd = parts[0].lower()
             arg = parts[1] if len(parts) > 1 else ""
 
-            # ----- msg <text> -----
-            if cmd == "msg" and arg != "":
-                send_line(sock, "MSG " + arg)
-                print(recv_line(sock))
-
             # ----- list -----
-            elif cmd == "list":
+            if cmd == "list":
                 send_line(sock, "LIST")
                 print(recv_line(sock))
 
@@ -91,21 +84,20 @@ def main():
                 send_line(sock, "QUIT")
                 print(recv_line(sock))
                 break
-            
-            # Transfer file into central server
+
             # ----- transfer <path> -----
             elif cmd == "transfer" and arg != "":
-                print(transfer_file(sock, arg))
+                print(transfer_file_to_server(sock, arg))
 
             else:
                 print("Unknown command. Type 'help'.")
     except ConnectionError as e:
         print("Error:", e)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         print()
 
     sock.close()
-    print("Disconnected")
+    print("Disconnected from the server.")
 
 
 if __name__ == "__main__":
