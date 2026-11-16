@@ -10,9 +10,13 @@ lock = threading.Lock()
 FOLDER = "server_files"
 CSV_FILE = "files.csv"
 
+# ------------------------------------ SEND DATA ------------------------------------
+
 # Send one reply line to the client
 def send_line(c, line):
     c.sendall((line + "\n").encode())
+
+# ------------------------------------ SHARED FILES' DATA (THE CENTRAL SERVER) ------------------------------------
 
 # Save user's file into files.csv
 def save_file(f, header):
@@ -42,6 +46,13 @@ def list_files():
         return "No files available"
     return "Files: " + ", ".join(names)
 
+# Clear files.csv for new server
+def clear_csv():
+    with lock:
+        open(CSV_FILE, "w").close()
+
+# ------------------------------------ MULTITHREADING (HANDLE ONE BY ONE) ------------------------------------
+
 # Read commands from one client and reply to each one
 def client_handler(c, addr):
     f = c.makefile("rb")
@@ -66,10 +77,7 @@ def client_handler(c, addr):
     c.close()
     print('Disconnected from :', addr[0], ':', addr[1])
 
-# Clear files.csv for new server
-def clear_csv():
-    with lock:
-        open(CSV_FILE, "w").close()
+# ------------------------------------ MAIN ------------------------------------
 
 # Main function
 def main():
