@@ -54,6 +54,18 @@ def transfer_file_to_server(sock, path):
 
     return recv_line(sock)
 
+# ------------------------------------ USER REGISTERATION HANDLE ------------------------------------
+
+# User registeration / Login in 
+def user_registeration(sock, cmd, name, pwd):
+    send_line(sock, cmd.upper() + " " + name + ": " + pwd)
+    response = recv_line(sock)
+    print(response)
+    return response.startswith("OK")  
+
+
+# ------------------------------------ MAIN ------------------------------------
+
 # Main program
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
