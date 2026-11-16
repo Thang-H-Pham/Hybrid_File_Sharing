@@ -5,6 +5,8 @@ HOST = "100.105.143.67"
 PORT = 11226
 BUFFER_SIZE = 4096
 
+# ------------------------------------ SEND AND RECEIVE DATA ------------------------------------
+
 # Send data/msg
 def send_line(sock, line):
     sock.sendall((line + "\n").encode())
@@ -20,6 +22,8 @@ def recv_line(sock):
             break
         data += byte
     return data.decode()
+
+# ------------------------------------ COMMANDS ------------------------------------
 
 # Send help to the client
 def print_help():
@@ -46,6 +50,8 @@ def transfer_file_to_server(sock, path):
             chunk = f.read(BUFFER_SIZE)
 
     return recv_line(sock)
+
+# ------------------------------------ MAIN ------------------------------------
 
 # Main program
 def main():
