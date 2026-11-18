@@ -16,6 +16,29 @@ CSV_FILE = "files.csv"
 def send_line(c, line):
     c.sendall((line + "\n").encode())
 
+# ------------------------------------ REGISTRATION FUNCTION (TO REPLACE SAVE_FILE) ------------------------------------
+
+# Save user's file registration into files.csv (NO BINARY STORAGE)
+def register_file(header,owner_ip):
+    name,size=header.rsplit(": ", 1)
+    name = os.path.basename(name)
+    size=int(size)
+
+    with lock:
+        with open(CSV_FILE, "a", newline="") as out:
+            #append the owner_ip to the csv row
+            csv.writer(out).writerow([name,size,datetime.now().strftime("%Y-%m-%d %H:%M:%S"), owner_ip])
+    print ("Registered", name, "from", owner_ip)
+    return "OK Registered " + name
+
+def get_file_ip(filename):
+    with lock:
+        with open (CSV_FILE, newline"") as f:
+            for row in csv.reader(f):
+                if row and row[0] == filename:
+                    return "IP"+row[3]
+        return 'ERROR File not found'
+
 # ------------------------------------ SHARED FILES' DATA (THE CENTRAL SERVER) ------------------------------------
 
 # Save user's file into files.csv
