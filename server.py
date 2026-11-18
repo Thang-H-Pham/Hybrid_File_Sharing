@@ -7,8 +7,6 @@ from datetime import datetime
 
 lock = threading.Lock()
 
-FOLDER = "server_files"
-CSV_FILE = "files.csv"
 
 # ------------------------------------ SEND DATA ------------------------------------
 
@@ -33,32 +31,11 @@ def register_file(header,owner_ip):
 
 def get_file_ip(filename):
     with lock:
-        with open (CSV_FILE, newline"") as f:
+        with open (CSV_FILE, newline="") as f:
             for row in csv.reader(f):
                 if row and row[0] == filename:
                     return "IP"+row[3]
         return 'ERROR File not found'
-
-# ------------------------------------ SHARED FILES' DATA (THE CENTRAL SERVER) ------------------------------------
-
-# Save user's file into files.csv
-def save_file(f, header):
-    name, size = header.rsplit(": ", 1)
-    name = os.path.basename(name)
-    size = int(size)
-
-    data = f.read(size)
-    if len(data) < size:
-        return "ERROR Upload incomplete"
-
-    with lock:
-        with open(os.path.join(FOLDER, name), "wb") as out:
-            out.write(data)
-        with open(CSV_FILE, "a", newline="") as out:
-            csv.writer(out).writerow([name, size, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-
-    print("Saved", name, "(" + str(size), "bytes)")
-    return "OK Received " + name
 
 # List all available shared files 
 def list_files():
@@ -88,8 +65,12 @@ def client_handler(c, addr):
 
             if line == "LIST":
                 send_line(c, list_files())
-            elif line.startswith("TRANSFER "):
-                send_line(c, save_file(f, line[9:]))
+            elif line.startswith("REGISTER "):
+                # Route to the new register function, passing the client's IP
+                send_line(c, register_file(line[9:], addr[0]))
+            elif line.startswith("GET_IP "):
+                # Route to the new IP lookup function
+                send_line(c, get_file_ip(line[7:]))
             elif line == "QUIT":
                 send_line(c, "BYE")
                 break
