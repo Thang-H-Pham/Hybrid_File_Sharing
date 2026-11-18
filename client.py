@@ -29,7 +29,7 @@ def recv_line(sock):
 
 # Send help to the client
 def print_help():
-    print('Commands: transfer "path" (upload a file) | list (show shared files) | help (show commands) | quit (disconnect)')
+    print('Commands: transfer "path" (upload a file) | list (show shared files) | register | download | help (show commands) | quit (disconnect)')
 
 # Transfer file into the main/central server
 def register_file_to_server(sock, path):
@@ -50,7 +50,7 @@ def register_file_to_server(sock, path):
 # ------------------------------------ P2P Listener Thread ------------------------------------
 
 def p2p_listener():
-    listener= socket.socket(socket_AF_INET, socket.sock_STREAM)
+    listener= socket.socket(socket.AF_INET, socket.sock_STREAM)
     listener.bind(("0.0.0.0", P2P_PORT))
     listener.listen(5)
     
