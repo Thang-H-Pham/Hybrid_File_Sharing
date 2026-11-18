@@ -1,14 +1,19 @@
+
 import os
 import csv
 import socket
 from _thread import start_new_thread
 import threading
 from datetime import datetime
+import json 
+import hashlib
+import secrets
 
 lock = threading.Lock()
 
 FOLDER = "server_files"
 CSV_FILE = "files.csv"
+USERS_FILE = "users.json"
 
 # ------------------------------------ SEND DATA ------------------------------------
 
@@ -51,11 +56,40 @@ def clear_csv():
     with lock:
         open(CSV_FILE, "w").close()
 
+
+# ------------------------------------ USER REGISTERATION ------------------------------------
+
+# Create the file if it is not exist
+def init_users():
+    with lock:
+        if not os.path.exists(USERS_FILE) or os.path.getsize(USERS_FILE) == 0:
+            with open(USERS_FILE, "w") as out:
+                json.dump({}, out)
+
+# Read the file and store in dictionary. It will helps to see if the user is already registered or not. 
+def load_users():
+    with open(USERS_FILE) as f:
+        return json.load(f)
+    
+# Updated the users.json with new and current users as well
+def save_users(users):
+    with open(USERS_FILE, "w") as out:
+        json.dump(users, out, indent=2)
+
+# Register for new user
+def register_user(): 
+    return 
+
+# Login for existed user
+def login_user(): 
+    return 
+
 # ------------------------------------ MULTITHREADING (HANDLE ONE BY ONE) ------------------------------------
 
 # Read commands from one client and reply to each one
 def client_handler(c, addr):
     f = c.makefile("rb")
+    user = None
     try:
         while True:
             line = f.readline()
@@ -63,20 +97,39 @@ def client_handler(c, addr):
                 break
             line = line.decode().strip()
 
-            if line == "LIST":
-                send_line(c, list_files())
-            elif line.startswith("TRANSFER "):
-                send_line(c, save_file(f, line[9:]))
+            # ----- register / login -----
+            if line.startswith("REGISTER ") or line.startswith("LOGIN "):
+                if user is not None:
+                    send_line(c, "ERROR Already logged in as " + user)
+                    continue
+                cmd, header = line.split(" ", 1)
+                if cmd == "REGISTER":
+                    user, response = register_user(header)
+                else:
+                    user, response = login_user(header)
+                send_line(c, response)
+
+            # ----- quit (allowed without login) -----
             elif line == "QUIT":
                 send_line(c, "BYE")
                 break
+
+            # ----- everything else needs a login -----
+            elif user is None:
+                if line.startswith("TRANSFER "):
+                    f.read(int(line.rsplit(": ", 1)[1]))  
+                send_line(c, "ERROR Please log in first")
+
+            elif line == "LIST":
+                send_line(c, list_files())
+            elif line.startswith("TRANSFER "):
+                send_line(c, save_file(f, line[9:]))
             else:
                 send_line(c, "ERROR Unknown command")
     except (ConnectionError, ValueError):
         pass
     c.close()
     print('Disconnected from :', addr[0], ':', addr[1])
-
 # ------------------------------------ MAIN ------------------------------------
 
 # Main function
