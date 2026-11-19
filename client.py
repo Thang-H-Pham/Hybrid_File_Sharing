@@ -4,6 +4,7 @@ import socket
 HOST = "100.105.143.67"
 PORT = 11226
 BUFFER_SIZE = 4096
+SESSION_FILE = "session.txt"   # where the client keeps its session ID (cookie)
 
 # ------------------------------------ SEND AND RECEIVE DATA ------------------------------------
 
@@ -26,13 +27,16 @@ def recv_line(sock):
 # ------------------------------------ COMMANDS ------------------------------------
 
 # Send help to the client
-def print_help():
-    print('Commands: transfer "path" (upload a file) | list (show shared files) | help (show commands) | quit (disconnect)')
+def print_help(is_register):
+    if is_register == True: 
+        print("register <Name>: <Password> | login <Name>: <Password>")
+    else: 
+        print('Welcome. Here are the commands: transfer "path" (upload a file) | list (show shared files) | help (show commands) | logout (forget saved login) | quit (disconnect)')
 
 # Transfer file into the main/central server
 def transfer_file_to_server(sock, path):
     path = path.strip().strip('"').strip("'")
-    if not os.path.isfile(path):
+    if not os.path.isfile(path):    
         return "ERROR File not found: " + path
 
     filename = os.path.basename(path)
@@ -51,6 +55,52 @@ def transfer_file_to_server(sock, path):
 
     return recv_line(sock)
 
+# ------------------------------------ USER REGISTERATION HANDLE ------------------------------------
+
+# User registeration / Login in 
+def user_registeration(sock, cmd, name, pwd):
+    send_line(sock, cmd.upper() + " " + name + ": " + pwd)
+    response = recv_line(sock)
+    print(response)
+    if response.startswith("OK"):
+        session_line = recv_line(sock)      # "SESSION <id>"
+        save_session(session_line[8:])
+        return True
+    return False
+
+# ------------------------------------ SESSION ID (COOKIE) ------------------------------------
+
+# Save the session ID in a file for next time
+def save_session(token):
+    with open(SESSION_FILE, "w") as out:
+        out.write(token)
+
+# Read the saved session ID, or None if there is none
+def load_session():
+    if not os.path.isfile(SESSION_FILE):
+        return None
+    with open(SESSION_FILE) as f:
+        return f.read().strip() or None
+
+# Delete the saved session ID
+def delete_session():
+    if os.path.isfile(SESSION_FILE):
+        os.remove(SESSION_FILE)
+
+# Try to log in with the saved session ID. Returns True if it worked.
+def resume_session(sock):
+    token = load_session()
+    if token is None:
+        return False
+    send_line(sock, "SESSION " + token)
+    response = recv_line(sock)
+    print(response)
+    if response.startswith("OK"):
+        return True
+    delete_session()   # the saved ID no longer works
+    return False
+
+
 # ------------------------------------ MAIN ------------------------------------
 
 # Main program
@@ -62,11 +112,17 @@ def main():
     except OSError:
         print("Could not connect to server. Is it running?")
         return
+    
     sock.settimeout(None)
     print("Connected to", HOST, PORT)
-    print_help()
+    is_register = True
 
     try:
+        # Use the saved session ID (cookie) if there is one
+        if resume_session(sock):
+            is_register = False
+        print_help(is_register)
+
         while True:
             line = input("> ").strip()
             if line == "":
@@ -75,15 +131,51 @@ def main():
             parts = line.split(" ", 1)
             cmd = parts[0].lower()
             arg = parts[1] if len(parts) > 1 else ""
-
+            
+            
+            # ----- Registeration / Login -----
+            if cmd == "register" or cmd == "login":
+                if not is_register: 
+                    print("You are already logged in.")
+                    continue
+                if ": " not in arg: 
+                    print("Wrong command. Usage: " + cmd + " <Name>: <Password>")
+                    continue
+                
+                name, pwd = arg.split(": ", 1)
+                name = name.strip()
+                pwd = pwd.strip()
+                
+                if name == "" or " " in name: 
+                    print("Name must not be empty or contain spaces")
+                    continue
+                if pwd == "" or " " in pwd: 
+                    print("Password must not be empty or contain spaces")
+                    continue
+                
+                if user_registeration(sock, cmd, name, pwd):
+                    is_register = False;
+                    print_help(is_register)
+            
             # ----- list -----
-            if cmd == "list":
+            elif cmd == "list":
                 send_line(sock, "LIST")
                 print(recv_line(sock))
 
             # ----- help -----
             elif cmd == "help":
-                print_help()
+                print_help(is_register)
+
+            # ----- logout -----
+            elif cmd == "logout":
+                if is_register:
+                    print("You are not logged in.")
+                    continue
+                send_line(sock, "LOGOUT")
+                print(recv_line(sock))
+                delete_session()
+                is_register = True
+                print_help(is_register)
 
             # ----- quit -----
             elif cmd == "quit":
