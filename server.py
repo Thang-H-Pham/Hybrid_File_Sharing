@@ -62,6 +62,29 @@ def clear_csv():
         open(CSV_FILE, "w").close()
         file_cache.clear()   # the cache starts empty too
 
+# ------------------------------------ P2P INDEXING ------------------------------------
+
+def share_file(header, owner_ip):
+    name, size = header.rsplit(": ", 1)
+    name = os.path.basename(name)
+    size = int(size)
+
+    with lock:
+        with open(CSV_FILE, "a", newline="") as out:
+            csv.writer(out).writerow([name, size, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), owner_ip])
+        file_cache.add(name)   # updates Thang's cache so LIST sees P2P files too
+
+    print("Shared (P2P)", name, "from", owner_ip)
+    return "OK Shared " + name
+
+def get_file_ip(filename):
+    with lock:
+        with open(CSV_FILE, newline="") as f:
+            for row in csv.reader(f):
+                if len(row) >= 4 and row[0] == filename:
+                    return "IP " + row[3]
+    return "ERROR File not found"
+
 # ------------------------------------ SESSION ID (COOKIE) ------------------------------------
 
 # Make a new random session ID for a logged-in user
@@ -219,6 +242,10 @@ def client_handler(c, addr):
                 send_line(c, list_files())
             elif line.startswith("TRANSFER "):
                 send_line(c, save_file(f, line[9:]))
+            elif line.startswith("SHARE "):
+                send_line(c, share_file(line[6:], addr[0]))
+            elif line.startswith("GET_IP "):
+                send_line(c, get_file_ip(line[7:]))
             else:
                 send_line(c, "ERROR Unknown command")
     except (ConnectionError, ValueError):
