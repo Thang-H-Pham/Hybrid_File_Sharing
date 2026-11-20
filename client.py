@@ -28,24 +28,53 @@ def recv_line(sock):
         data += byte
     return data.decode()
 
+# Print a reply for the user: "ERROR ..." -> "[Error] ...", "OK ..." -> "[Success]: ..."
+# (the programs still send OK / ERROR to each other, only the screen text changes)
+def show(message):
+    if message.startswith("ERROR"):
+        print("[Error] " + message[5:].lstrip(", "))
+    elif message.startswith("OK"):
+        print("[Success]: " + message[2:].lstrip(", "))
+    else:
+        print(message)
+
 # ------------------------------------ COMMANDS ------------------------------------
 
 # Send help to the client
 def print_help(is_register):
-    if is_register == True: 
-        print("register <Name>: <Password> | login <Name>: <Password>")
-    else: 
-        print('Welcome. Here are the commands: transfer "path" (upload a file) | list (show shared files) | help (show commands) | share "path" | download <filename> logout (forget saved login) | quit (disconnect)')
+    if is_register == True:
+        print("Please log in or register:")
+        print("  login <Name>: <Password>      log in to your account")
+        print("  register <Name>: <Password>   create a new account")
+        print("  help                          show this list")
+        print("  quit                          close the program")
+        print()
+    else:
+        print("You're logged in. What would you like to do?")
+        print()
+        print("  Files on other users' computers (P2P)")
+        print('    - share "path"          let others download a file from your computer')
+        print("    - download <filename>   get a file from another user")
+        print()
+        print("  Files on the server")
+        print('    - transfer "path"       upload a file to the server')
+        print()
+        print("  General")
+        print("    - list                  show all files you can get")
+        print("    - help                  show this list")
+        print("    - logout                log out and forget the saved login")
+        print("    - quit                  close the program")
+        print()
 
 # Transfer file into the main/central server
 def transfer_file_to_server(sock, path):
     path = path.strip().strip('"').strip("'")
     if not os.path.isfile(path):    
-        return "ERROR File not found: " + path
+        return "ERROR, File not found: " + path
 
     filename = os.path.basename(path)
     if " " in filename:
-        return "ERROR Filenames with spaces are not supported"
+        return "ERROR, Filenames with spaces are not supported"
 
     size = os.path.getsize(path)
 
@@ -64,18 +93,35 @@ def transfer_file_to_server(sock, path):
 def share_file_to_server(sock, path):
     path = path.strip().strip('"').strip("'")
     if not os.path.isfile(path):
-        return "ERROR File not found: " + path
+        return "ERROR, File not found: " + path
 
     filename = os.path.basename(path)
     if " " in filename:
-        return "ERROR Filenames with spaces are not supported"
+        return "ERROR, Filenames with spaces are not supported"
 
     size = os.path.getsize(path)
-    shared_files[filename] = path
 
     send_line(sock, f"SHARE {filename}: {size}")
-    return recv_line(sock)
+    response = recv_line(sock)
+    if response.startswith("OK"):
+        shared_files[filename] = path   # remember the path only if the server accepted it
+    return response
 
+# Send ONE shared file to a peer that asks for it
+def send_shared_file(conn):
+    requested_file = recv_line(conn)
+    filepath = shared_files.get(requested_file)   # only files this client shared
+    if filepath is None or not os.path.isfile(filepath):
+        send_line(conn, "ERROR, File is not shared by this peer")
+        return
+    send_line(conn, "OK " + str(os.path.getsize(filepath)))
+    with open(filepath, "rb") as f:
+        chunk = f.read(BUFFER_SIZE)
+        while chunk:
+            conn.sendall(chunk)
+            chunk = f.read(BUFFER_SIZE)
+
+# Background thread: wait for other peers to download from this client
 def p2p_listener():
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -85,44 +131,51 @@ def p2p_listener():
     while True:
         conn, addr = listener.accept()
         try:
-            requested_file = recv_line(conn)
-            filepath = shared_files.get(requested_file, requested_file)
-            if os.path.isfile(filepath):
-                with open(filepath, "rb") as f:
-                    while True:
-                        chunk = f.read(BUFFER_SIZE)
-                        if not chunk:
-                            break
-                        conn.sendall(chunk)
+            send_shared_file(conn)
         except (ConnectionError, OSError):
             pass
         finally:
             conn.close()
 
+# Ask the server who has the file, then download it directly from that peer
 def download_file(sock, filename):
     send_line(sock, "GET_IP " + filename)
     response = recv_line(sock)
+    if not response.startswith("IP "):
+        return response
 
-    if response.startswith("IP "):
-        peer_ip = response[3:]
-        print(f"Connecting to peer at {peer_ip}...")
+    peer_ip = response[3:]
+    print(f"Connecting to peer at {peer_ip}...")
+    save_as = "downloaded_" + filename
 
-        peer_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            peer_sock.connect((peer_ip, P2P_PORT))
-            send_line(peer_sock, filename)
+    peer_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    peer_sock.settimeout(10)
+    try:
+        peer_sock.connect((peer_ip, P2P_PORT))
+        send_line(peer_sock, filename)
 
-            with open("downloaded_" + filename, "wb") as f:
-                while True:
-                    chunk = peer_sock.recv(BUFFER_SIZE)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            peer_sock.close()
-            return f"Successfully downloaded: {filename}"
-        except OSError:
-            return "ERROR Could not connect to the peer."
-    return response
+        answer = recv_line(peer_sock)          # "OK <size>" or "ERROR ..."
+        if not answer.startswith("OK "):
+            return answer
+        size = int(answer[3:])
+
+        received = 0
+        with open(save_as, "wb") as f:
+            while received < size:
+                chunk = peer_sock.recv(min(BUFFER_SIZE, size - received))
+                if not chunk:
+                    break
+                f.write(chunk)
+                received += len(chunk)
+
+        if received < size:
+            os.remove(save_as)                 # do not keep a broken file
+            return "ERROR Download incomplete (" + str(received) + " of " + str(size) + " bytes)"
+        return "OK Downloaded " + filename + " (" + str(size) + " bytes) as " + save_as
+    except (OSError, ConnectionError, ValueError):
+        return "ERROR Could not download from the peer."
+    finally:
+        peer_sock.close()
 
 
 # ------------------------------------ USER REGISTERATION HANDLE ------------------------------------
@@ -131,7 +184,7 @@ def download_file(sock, filename):
 def user_registeration(sock, cmd, name, pwd):
     send_line(sock, cmd.upper() + " " + name + ": " + pwd)
     response = recv_line(sock)
-    print(response)
+    show(response)
     if response.startswith("OK"):
         session_line = recv_line(sock)      # "SESSION <id>"
         save_session(session_line[8:])
@@ -164,7 +217,7 @@ def resume_session(sock):
         return False
     send_line(sock, "SESSION " + token)
     response = recv_line(sock)
-    print(response)
+    show(response)
     if response.startswith("OK"):
         return True
     delete_session()   # the saved ID no longer works
@@ -187,7 +240,7 @@ def main():
         return
     
     sock.settimeout(None)
-    print("Connected to", HOST, PORT)
+    print("======== Welcome to our Hybrid File Sharing Services ========")
     is_register = True
 
     try:
@@ -233,7 +286,7 @@ def main():
             # ----- list -----
             elif cmd == "list":
                 send_line(sock, "LIST")
-                print(recv_line(sock))
+                show(recv_line(sock))
 
             # ----- help -----
             elif cmd == "help":
@@ -245,7 +298,7 @@ def main():
                     print("You are not logged in.")
                     continue
                 send_line(sock, "LOGOUT")
-                print(recv_line(sock))
+                show(recv_line(sock))
                 delete_session()
                 is_register = True
                 print_help(is_register)
@@ -258,20 +311,20 @@ def main():
 
             # ----- transfer <path> -----
             elif cmd == "transfer" and arg != "":
-                print(transfer_file_to_server(sock, arg))
+                show(transfer_file_to_server(sock, arg))
 
             # ----- share <path> (P2P register) -----
             elif cmd == "share" and arg != "":
-                print(share_file_to_server(sock, arg))
+                show(share_file_to_server(sock, arg))
 
             # ----- download <filename> (P2P direct download) -----
             elif cmd == "download" and arg != "":
-                print(download_file(sock, arg))
+                show(download_file(sock, arg))
             
             else:
                 print("Unknown command. Type 'help'.")
     except ConnectionError as e:
-        print("Error:", e)
+        print("[Error]", e)
     except (KeyboardInterrupt, EOFError):
         print()
 
