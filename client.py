@@ -54,7 +54,7 @@ def print_help(is_register):
         print()
         print("  Files on other users' computers (P2P)")
         print('    - share "path"          let others download a file from your computer')
-        print("    - download <filename>   get a file from another user")
+        # print("    - download <filename>   get a file from another user")
         print()
         print("  Files on the server")
         print('    - transfer "path"       upload a file to the server')
@@ -137,45 +137,45 @@ def p2p_listener():
         finally:
             conn.close()
 
-# Ask the server who has the file, then download it directly from that peer
-def download_file(sock, filename):
-    send_line(sock, "GET_IP " + filename)
-    response = recv_line(sock)
-    if not response.startswith("IP "):
-        return response
+# # Ask the server who has the file, then download it directly from that peer
+# def download_file(sock, filename):
+    # send_line(sock, "GET_IP " + filename)
+    # response = recv_line(sock)
+    # if not response.startswith("IP "):
+        # return response
 
-    peer_ip = response[3:]
-    print(f"Connecting to peer at {peer_ip}...")
-    save_as = "downloaded_" + filename
+    # peer_ip = response[3:]
+    # print(f"Connecting to peer at {peer_ip}...")
+    # save_as = "downloaded_" + filename
 
-    peer_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    peer_sock.settimeout(10)
-    try:
-        peer_sock.connect((peer_ip, P2P_PORT))
-        send_line(peer_sock, filename)
+    # peer_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # peer_sock.settimeout(10)
+    # try:
+        # peer_sock.connect((peer_ip, P2P_PORT))
+        # send_line(peer_sock, filename)
 
-        answer = recv_line(peer_sock)          # "OK <size>" or "ERROR ..."
-        if not answer.startswith("OK "):
-            return answer
-        size = int(answer[3:])
+        # answer = recv_line(peer_sock)          # "OK <size>" or "ERROR ..."
+        # if not answer.startswith("OK "):
+            # return answer
+        # size = int(answer[3:])
 
-        received = 0
-        with open(save_as, "wb") as f:
-            while received < size:
-                chunk = peer_sock.recv(min(BUFFER_SIZE, size - received))
-                if not chunk:
-                    break
-                f.write(chunk)
-                received += len(chunk)
+        # received = 0
+        # with open(save_as, "wb") as f:
+            # while received < size:
+                # chunk = peer_sock.recv(min(BUFFER_SIZE, size - received))
+                # if not chunk:
+                    # break
+                # f.write(chunk)
+                # received += len(chunk)
 
-        if received < size:
-            os.remove(save_as)                 # do not keep a broken file
-            return "ERROR Download incomplete (" + str(received) + " of " + str(size) + " bytes)"
-        return "OK Downloaded " + filename + " (" + str(size) + " bytes) as " + save_as
-    except (OSError, ConnectionError, ValueError):
-        return "ERROR Could not download from the peer."
-    finally:
-        peer_sock.close()
+        # if received < size:
+            # os.remove(save_as)                 # do not keep a broken file
+            # return "ERROR Download incomplete (" + str(received) + " of " + str(size) + " bytes)"
+        # return "OK Downloaded " + filename + " (" + str(size) + " bytes) as " + save_as
+    # except (OSError, ConnectionError, ValueError):
+        # return "ERROR Could not download from the peer."
+    # finally:
+        # peer_sock.close()
 
 
 # ------------------------------------ USER REGISTERATION HANDLE ------------------------------------
@@ -317,9 +317,9 @@ def main():
             elif cmd == "share" and arg != "":
                 show(share_file_to_server(sock, arg))
 
-            # ----- download <filename> (P2P direct download) -----
-            elif cmd == "download" and arg != "":
-                show(download_file(sock, arg))
+            # # ----- download <filename> (P2P direct download) -----
+            # elif cmd == "download" and arg != "":
+                # show(download_file(sock, arg))
             
             else:
                 print("Unknown command. Type 'help'.")

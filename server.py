@@ -18,7 +18,7 @@ USERS_FILE = "users.json"
 SESSION_TIME = 60 * 60   # An amount of valid time (here is set of 1 hour)
 
 sessions = {}            # session ID -> {"user": name, "expires": time}
-file_cache = set()       # non-duplicated names of files stored on the server (transfer).
+file_cache = {}          # files stored on the server (transfer): file name -> name of the user who shared it
 peer_files = {}          # P2P index: file name -> {"ip": owner IP, "user": owner name, "conn": owner connection}
 
 # ------------------------------------ SEND DATA ------------------------------------
@@ -30,7 +30,7 @@ def send_line(c, line):
 # ------------------------------------ SHARED FILES' DATA (THE CENTRAL SERVER) ------------------------------------
 
 # Save user's file into files.csv
-def save_file(f, header):
+def save_file(f, header, user):
     name, size = header.rsplit(": ", 1)
     name = os.path.basename(name)
     size = int(size)
@@ -44,20 +44,18 @@ def save_file(f, header):
             out.write(data)
         with open(CSV_FILE, "a", newline="") as out:
             csv.writer(out).writerow([name, size, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-        file_cache.add(name)   # keep the cache up to date
+        file_cache[name] = user   # keep the cache up to date, with who shared it
 
     print("Saved", name, "(" + str(size), "bytes)")
     return "OK Received " + name
 
-# List all available files, labelled by where they are (read from memory, not from files.csv)
+# List all shared files with the name of the person who shared each one (read from memory, not from files.csv)
 def list_files():
     with lock:
-        server_names = sorted(file_cache)
-        peer_names = sorted(name + " (" + info["user"] + ")" for name, info in peer_files.items())
-    if not server_names and not peer_names:
+        server_names = sorted(name + " (" + user + ")" for name, user in file_cache.items())
+    if not server_names:
         return "No files available"
-    return ("On server: " + (", ".join(server_names) or "none")
-            + " | Shared by peers (use download): " + (", ".join(peer_names) or "none"))
+    return "On server: " + ", ".join(server_names)
 
 # Clear files.csv for new server
 def clear_csv():
@@ -82,16 +80,16 @@ def share_file(header, owner_ip, user, conn):
     print("Shared (P2P)", name, "from", user, "at", owner_ip)
     return "OK Shared " + name
 
-# Tell the downloader which peer has the file
-def get_file_ip(filename):
-    with lock:
-        info = peer_files.get(filename)
-        on_server = filename in file_cache
-    if info is not None:
-        return "IP " + info["ip"]
-    if on_server:
-        return "ERROR " + filename + " is stored on the server, not shared by a peer"
-    return "ERROR File not found"
+# # Tell the downloader which peer has the file
+# def get_file_ip(filename):
+    # with lock:
+        # info = peer_files.get(filename)
+        # on_server = filename in file_cache
+    # if info is not None:
+        # return "IP " + info["ip"]
+    # if on_server:
+        # return "ERROR " + filename + " is stored on the server, not shared by a peer"
+    # return "ERROR File not found"
 
 # Remove every file a peer shared once that peer disconnects
 def remove_peer_files(conn):
@@ -258,11 +256,11 @@ def client_handler(c, addr):
             elif line == "LIST":
                 send_line(c, list_files())
             elif line.startswith("TRANSFER "):
-                send_line(c, save_file(f, line[9:]))
+                send_line(c, save_file(f, line[9:], user))
             elif line.startswith("SHARE "):
                 send_line(c, share_file(line[6:], addr[0], user, addr))
-            elif line.startswith("GET_IP "):
-                send_line(c, get_file_ip(line[7:]))
+            # elif line.startswith("GET_IP "):
+                # send_line(c, get_file_ip(line[7:]))
             else:
                 send_line(c, "ERROR Unknown command")
     except (ConnectionError, ValueError):
