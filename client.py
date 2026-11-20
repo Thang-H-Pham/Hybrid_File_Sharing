@@ -1,10 +1,14 @@
 import os
+import threading
 import socket
 
 HOST = "100.105.143.67"
 PORT = 11226
 BUFFER_SIZE = 4096
 SESSION_FILE = "session.txt"   # where the client keeps its session ID (cookie)
+
+P2P_PORT = 11926
+shared_files = {}   # maps filename -> full local path so p2p_listener can find it
 
 # ------------------------------------ SEND AND RECEIVE DATA ------------------------------------
 
@@ -31,7 +35,7 @@ def print_help(is_register):
     if is_register == True: 
         print("register <Name>: <Password> | login <Name>: <Password>")
     else: 
-        print('Welcome. Here are the commands: transfer "path" (upload a file) | list (show shared files) | help (show commands) | logout (forget saved login) | quit (disconnect)')
+        print('Welcome. Here are the commands: transfer "path" (upload a file) | list (show shared files) | help (show commands) | share "path" | download <filename> logout (forget saved login) | quit (disconnect)')
 
 # Transfer file into the main/central server
 def transfer_file_to_server(sock, path):
@@ -54,6 +58,72 @@ def transfer_file_to_server(sock, path):
             chunk = f.read(BUFFER_SIZE)
 
     return recv_line(sock)
+
+# ------------------------------------ P2P FUNCTIONS ------------------------------------
+
+def share_file_to_server(sock, path):
+    path = path.strip().strip('"').strip("'")
+    if not os.path.isfile(path):
+        return "ERROR File not found: " + path
+
+    filename = os.path.basename(path)
+    if " " in filename:
+        return "ERROR Filenames with spaces are not supported"
+
+    size = os.path.getsize(path)
+    shared_files[filename] = path
+
+    send_line(sock, f"SHARE {filename}: {size}")
+    return recv_line(sock)
+
+def p2p_listener():
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("0.0.0.0", P2P_PORT))
+    listener.listen(5)
+
+    while True:
+        conn, addr = listener.accept()
+        try:
+            requested_file = recv_line(conn)
+            filepath = shared_files.get(requested_file, requested_file)
+            if os.path.isfile(filepath):
+                with open(filepath, "rb") as f:
+                    while True:
+                        chunk = f.read(BUFFER_SIZE)
+                        if not chunk:
+                            break
+                        conn.sendall(chunk)
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            conn.close()
+
+def download_file(sock, filename):
+    send_line(sock, "GET_IP " + filename)
+    response = recv_line(sock)
+
+    if response.startswith("IP "):
+        peer_ip = response[3:]
+        print(f"Connecting to peer at {peer_ip}...")
+
+        peer_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            peer_sock.connect((peer_ip, P2P_PORT))
+            send_line(peer_sock, filename)
+
+            with open("downloaded_" + filename, "wb") as f:
+                while True:
+                    chunk = peer_sock.recv(BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            peer_sock.close()
+            return f"Successfully downloaded: {filename}"
+        except OSError:
+            return "ERROR Could not connect to the peer."
+    return response
+
 
 # ------------------------------------ USER REGISTERATION HANDLE ------------------------------------
 
@@ -105,6 +175,9 @@ def resume_session(sock):
 
 # Main program
 def main():
+
+    threading.Thread(target=p2p_listener, daemon=True).start() # start background listener
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(10)
     try:
@@ -187,6 +260,14 @@ def main():
             elif cmd == "transfer" and arg != "":
                 print(transfer_file_to_server(sock, arg))
 
+            # ----- share <path> (P2P register) -----
+            elif cmd == "share" and arg != "":
+                print(share_file_to_server(sock, arg))
+
+            # ----- download <filename> (P2P direct download) -----
+            elif cmd == "download" and arg != "":
+                print(download_file(sock, arg))
+            
             else:
                 print("Unknown command. Type 'help'.")
     except ConnectionError as e:
