@@ -18,7 +18,8 @@ USERS_FILE = "users.json"
 SESSION_TIME = 60 * 60   # An amount of valid time (here is set of 1 hour)
 
 sessions = {}            # session ID -> {"user": name, "expires": time}
-file_cache = set()       # names of shared files, kept in memory so LIST does not reread files.csv
+file_cache = set()       # non-duplicated names of files stored on the server (transfer).
+peer_files = {}          # P2P index: file name -> {"ip": owner IP, "user": owner name, "conn": owner connection}
 
 # ------------------------------------ SEND DATA ------------------------------------
 
@@ -48,23 +49,27 @@ def save_file(f, header):
     print("Saved", name, "(" + str(size), "bytes)")
     return "OK Received " + name
 
-# List all available shared files 
+# List all available files, labelled by where they are (read from memory, not from files.csv)
 def list_files():
     with lock:
-        names = sorted(file_cache)   # read from the cache, not from files.csv
-    if not names:
+        server_names = sorted(file_cache)
+        peer_names = sorted(name + " (" + info["user"] + ")" for name, info in peer_files.items())
+    if not server_names and not peer_names:
         return "No files available"
-    return "Files: " + ", ".join(names)
+    return ("On server: " + (", ".join(server_names) or "none")
+            + " | Shared by peers (use download): " + (", ".join(peer_names) or "none"))
 
 # Clear files.csv for new server
 def clear_csv():
     with lock:
         open(CSV_FILE, "w").close()
         file_cache.clear()   # the cache starts empty too
+        peer_files.clear()
 
 # ------------------------------------ P2P INDEXING ------------------------------------
 
-def share_file(header, owner_ip):
+# Record that a peer shares a file (the file itself stays on the peer)
+def share_file(header, owner_ip, user, conn):
     name, size = header.rsplit(": ", 1)
     name = os.path.basename(name)
     size = int(size)
@@ -72,18 +77,30 @@ def share_file(header, owner_ip):
     with lock:
         with open(CSV_FILE, "a", newline="") as out:
             csv.writer(out).writerow([name, size, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), owner_ip])
-        file_cache.add(name)   # updates Thang's cache so LIST sees P2P files too
+        peer_files[name] = {"ip": owner_ip, "user": user, "conn": conn}
 
-    print("Shared (P2P)", name, "from", owner_ip)
+    print("Shared (P2P)", name, "from", user, "at", owner_ip)
     return "OK Shared " + name
 
+# Tell the downloader which peer has the file
 def get_file_ip(filename):
     with lock:
-        with open(CSV_FILE, newline="") as f:
-            for row in csv.reader(f):
-                if len(row) >= 4 and row[0] == filename:
-                    return "IP " + row[3]
+        info = peer_files.get(filename)
+        on_server = filename in file_cache
+    if info is not None:
+        return "IP " + info["ip"]
+    if on_server:
+        return "ERROR " + filename + " is stored on the server, not shared by a peer"
     return "ERROR File not found"
+
+# Remove every file a peer shared once that peer disconnects
+def remove_peer_files(conn):
+    with lock:
+        gone = [name for name, info in peer_files.items() if info["conn"] == conn]
+        for name in gone:
+            del peer_files[name]
+    if gone:
+        print("Removed offline peer files:", ", ".join(gone))
 
 # ------------------------------------ SESSION ID (COOKIE) ------------------------------------
 
@@ -136,12 +153,12 @@ def hash_password(pwd, salt):
 # Register for new user
 def register_user(header): 
     if ": " not in header:
-        return None, "ERROR, Use: register <Name>: <Password>"
+        return None, "ERROR Use: register <Name>: <Password>"
     
     name, pwd = header.split(": ", 1)
     
     if name == "" or " " in name or pwd == "":
-        return None, "ERROR, Name must not be empty or contain spaces, and password must not be empty"
+        return None, "ERROR Name must not be empty or contain spaces, and password must not be empty"
 
     with lock:
         users = load_users()
@@ -170,7 +187,7 @@ def login_user(header):
     account = users.get(name)
     
     if account is None or hash_password(pwd, account["salt"]) != account["password"]:
-        return None, "ERROR, Invalid username or password"
+        return None, "ERROR Invalid username or password"
 
     print(name +" just logged in.")
     return name, "OK, Welcome back: " + name 
@@ -243,13 +260,14 @@ def client_handler(c, addr):
             elif line.startswith("TRANSFER "):
                 send_line(c, save_file(f, line[9:]))
             elif line.startswith("SHARE "):
-                send_line(c, share_file(line[6:], addr[0]))
+                send_line(c, share_file(line[6:], addr[0], user, addr))
             elif line.startswith("GET_IP "):
                 send_line(c, get_file_ip(line[7:]))
             else:
                 send_line(c, "ERROR Unknown command")
     except (ConnectionError, ValueError):
         pass
+    remove_peer_files(addr)   # this peer is offline now
     c.close()
     print('Disconnected from :', addr[0], ':', addr[1])
 # ------------------------------------ MAIN ------------------------------------
